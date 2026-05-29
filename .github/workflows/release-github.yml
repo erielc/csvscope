@@ -1,0 +1,116 @@
+name: GitHub Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  github-release:
+    name: Create GitHub release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+
+      - name: Locate release notes
+        id: notes
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          NOTES_FILE=".github/release-notes/v${VERSION}.md"
+          if [ ! -f "$NOTES_FILE" ]; then
+            echo "::error::Release notes file $NOTES_FILE not found"
+            exit 1
+          fi
+          if [ ! -s "$NOTES_FILE" ]; then
+            echo "::error::Release notes file $NOTES_FILE is empty"
+            exit 1
+          fi
+          echo "notes-file=$NOTES_FILE" >> $GITHUB_OUTPUT
+
+      - name: Create source archive
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          TAG="${{ steps.version.outputs.tag }}"
+          mkdir -p release-assets
+          git archive --format=tar.gz \
+            --prefix="csvscope-${VERSION}/" \
+            -o "release-assets/csvscope-${VERSION}-source.tar.gz" \
+            "$TAG"
+          # Also produce a zip for convenience
+          git archive --format=zip \
+            --prefix="csvscope-${VERSION}/" \
+            -o "release-assets/csvscope-${VERSION}-source.zip" \
+            "$TAG"
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ steps.version.outputs.tag }}
+          tag_name: ${{ steps.version.outputs.tag }}
+          body_path: ${{ steps.notes.outputs.notes-file }}
+          draft: false
+          prerelease: ${{ contains(steps.version.outputs.tag, '-') }}
+          files: |
+            release-assets/*.tar.gz
+            release-assets/*.zip
+          fail_on_unmatched_files: true
+
+      - name: Update CHANGELOG.md
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          NOTES_FILE="${{ steps.notes.outputs.notes-file }}"
+          DATE=$(date -u +"%Y-%m-%d")
+
+          # Build a new CHANGELOG entry
+          {
+            echo "## [${VERSION}] - ${DATE}"
+            echo ""
+            cat "$NOTES_FILE"
+            echo ""
+          } > /tmp/new-entry.md
+
+          # Insert below the "## [Unreleased]" header if present, else at top after main header
+          if grep -q "^## \[Unreleased\]" CHANGELOG.md; then
+            awk -v new_entry_file="/tmp/new-entry.md" '
+              /^## \[Unreleased\]/ {
+                print
+                getline
+                print
+                while ((getline line < new_entry_file) > 0) print line
+                close(new_entry_file)
+                next
+              }
+              { print }
+            ' CHANGELOG.md > /tmp/CHANGELOG.new.md
+            mv /tmp/CHANGELOG.new.md CHANGELOG.md
+          else
+            cat /tmp/new-entry.md CHANGELOG.md > /tmp/CHANGELOG.new.md
+            mv /tmp/CHANGELOG.new.md CHANGELOG.md
+          fi
+
+      - name: Commit CHANGELOG update
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet CHANGELOG.md; then
+            echo "No CHANGELOG changes to commit"
+          else
+            git add CHANGELOG.md
+            git commit -m "docs: update CHANGELOG for ${{ steps.version.outputs.tag }} [skip ci]"
+            # Push to main; the tag is already separate
+            git push origin HEAD:main
+          fi

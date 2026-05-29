@@ -1,0 +1,87 @@
+name: Release on version.txt change
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'version.txt'
+
+permissions:
+  contents: write
+
+jobs:
+  detect-and-tag:
+    name: Detect version change and create tag
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.read-version.outputs.version }}
+      tag: ${{ steps.read-version.outputs.tag }}
+      should-release: ${{ steps.check-tag.outputs.should-release }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Read version from version.txt
+        id: read-version
+        run: |
+          VERSION=$(cat version.txt | tr -d '[:space:]')
+          if [ -z "$VERSION" ]; then
+            echo "::error::version.txt is empty"
+            exit 1
+          fi
+          # Validate semver-ish (X.Y.Z, optional prerelease)
+          if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$'; then
+            echo "::error::version.txt contents '$VERSION' is not a valid semver"
+            exit 1
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=v$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Verify pyproject.toml matches version.txt
+        run: |
+          VERSION="${{ steps.read-version.outputs.version }}"
+          PROJECT_VERSION=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          if [ "$VERSION" != "$PROJECT_VERSION" ]; then
+            echo "::error::version.txt ($VERSION) does not match pyproject.toml ($PROJECT_VERSION). Update both before releasing."
+            exit 1
+          fi
+
+      - name: Verify release notes exist
+        run: |
+          VERSION="${{ steps.read-version.outputs.version }}"
+          NOTES_FILE=".github/release-notes/v${VERSION}.md"
+          if [ ! -f "$NOTES_FILE" ]; then
+            echo "::error::Release notes file $NOTES_FILE does not exist. Create it before bumping version.txt."
+            exit 1
+          fi
+          if [ ! -s "$NOTES_FILE" ]; then
+            echo "::error::Release notes file $NOTES_FILE is empty."
+            exit 1
+          fi
+
+      - name: Check if tag already exists
+        id: check-tag
+        run: |
+          TAG="${{ steps.read-version.outputs.tag }}"
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG already exists, skipping release"
+            echo "should-release=false" >> $GITHUB_OUTPUT
+          else
+            echo "should-release=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Configure git
+        if: steps.check-tag.outputs.should-release == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Create and push tag
+        if: steps.check-tag.outputs.should-release == 'true'
+        run: |
+          TAG="${{ steps.read-version.outputs.tag }}"
+          git tag -a "$TAG" -m "Release $TAG"
+          git push origin "$TAG"
