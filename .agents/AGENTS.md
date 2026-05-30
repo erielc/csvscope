@@ -13,17 +13,17 @@ A file for [guiding coding agents](https://agents.md/).
 - **Run with coverage:** `pytest --cov=csvscope --cov-report=term-missing`
 - **Lint:** `ruff check .`
 - **Format:** `ruff format .`
-- **Type check:** `mypy src/`
+- **Type check:** `mypy csvscope/`
 - **Build distribution:** `python -m build`
 - **Run CLI locally:** `python -m csvscope <args>` or `csvscope <args>` (after install)
 
 ## Project Layout
 
-- **Source:** `src/csvscope/`
+- **Source:** `csvscope/`
 - **Tests:** `tests/`
 - **Test data:** `tests/data/` — small CSV fixtures, do not bloat
 - **CI workflows:** `.github/workflows/`
-- **Public API:** anything exported in `src/csvscope/__init__.py`
+- **Public API:** anything exported in `csvscope/__init__.py`
 
 ## Design Constraints
 

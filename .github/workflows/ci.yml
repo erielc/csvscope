@@ -59,7 +59,7 @@ jobs:
           python -m pip install -e ".[dev]"
 
       - name: Run mypy
-        run: mypy src/
+        run: mypy csvscope/
 
   test:
     name: Test (Python ${{ matrix.python-version }} on ${{ matrix.os }})
